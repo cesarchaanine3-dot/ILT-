@@ -3,68 +3,151 @@ service cloud.firestore {
   match /databases/{database}/documents {
     
     // ===============================================================
+    // 0. Global Safety Net
+    // ===============================================================
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // ===============================================================
     // Helper Functions
     // ===============================================================
-    function isAuthenticated() {
+    function isSignedIn() {
       return request.auth != null;
     }
 
-    function getUserData() {
+    function isEmailVerified() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function getMyProfile() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
     }
 
+    function hasValidProfile() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
     function isAdmin() {
-      return isAuthenticated() && (
-        (request.auth.token.email.lower() == "cesarchaanine3@gmail.com" && request.auth.token.email_verified == true) || 
-        (request.auth.token.email.lower() == "reportilt@gmail.com" && request.auth.token.email_verified == true) || 
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      return isSignedIn() && (
+        (isEmailVerified() && (request.auth.token.email.lower() == "cesarchaanine3@gmail.com" || request.auth.token.email.lower() == "reportilt@gmail.com")) || 
+        (hasValidProfile() && getMyProfile().role == 'admin')
       );
     }
 
     function isTech() {
-      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'tech';
+      return hasValidProfile() && getMyProfile().role == 'tech';
     }
 
     function belongsToCampus(campusId) {
-      return isAdmin() || (isTech() && getUserData().campusId == campusId);
+      return isAdmin() || (isTech() && getMyProfile().campusId == campusId);
     }
 
     // ===============================================================
-    // Rules
+    // Entity Validations
     // ===============================================================
 
-    // User Profile Rules
+    function isValidUser(data) {
+      return data.keys().hasAll(['id', 'uid', 'email', 'role']) &&
+             data.id is string && data.id.size() <= 128 &&
+             (data.uid == null || data.uid is string) &&
+             data.email is string && data.email.size() <= 100 &&
+             data.role in ['admin', 'tech'] &&
+             (!('campusId' in data) || (data.campusId is string && data.campusId.size() <= 50));
+    }
+
+    function isValidStudent(data) {
+      return data.keys().hasAll(['id', 'name', 'campusId']) &&
+             data.id is string && data.id.size() <= 100 &&
+             data.name is string && data.name.size() <= 100 &&
+             data.campusId is string && data.campusId.size() <= 50;
+    }
+
+    function isValidLoan(data) {
+      return data.keys().hasAll(['studentId', 'studentName', 'assetTag', 'type', 'checkoutDate', 'status', 'campusId']) &&
+             data.studentId is string && data.studentId.size() <= 100 &&
+             data.studentName is string && data.studentName.size() <= 100 &&
+             data.assetTag is string && data.assetTag.size() <= 100 &&
+             data.type in ['chromebook', 'charger'] &&
+             data.checkoutDate is string &&
+             data.status in ['active', 'returned'] &&
+             data.campusId is string && data.campusId.size() <= 50;
+    }
+
+    // ===============================================================
+    // Resource Rules
+    // ===============================================================
+
+    // User Profiles
     match /users/{userId} {
-      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
-      allow create: if isAuthenticated() && (
-        // Self-creation for initial login
-        (request.auth.uid == userId && request.resource.data.role == (
-          (request.auth.token.email.lower() == "cesarchaanine3@gmail.com" || request.auth.token.email.lower() == "reportilt@gmail.com") 
-          ? "admin" : "tech"
+      // Users can read their own profile, or admins can read any
+      // We also allow reading by email for invitations/registration
+      // Allow listing technicians for the login selection screen
+      allow read: if isSignedIn() && (
+        request.auth.uid == userId || 
+        isAdmin() ||
+        (resource != null && resource.data.email.lower() == (request.auth.token.email.lower() if "email" in request.auth.token else "")) ||
+        (resource != null && resource.data.role == 'tech')
+      );
+
+      allow create: if isSignedIn() && isValidUser(incoming()) && (
+        // Self-registration
+        (request.auth.uid == userId && (
+          // Allow anyone to register as a tech (assignment happens via PIN/invite)
+          (incoming().role == 'tech') || 
+          // Allow admin self-registration ONLY for hardcoded verified emails
+          (incoming().role == 'admin' && isEmailVerified() && (request.auth.token.email.lower() in ["cesarchaanine3@gmail.com", "reportilt@gmail.com"]))
         )) ||
         isAdmin()
       );
-      allow update: if isAdmin();
-      allow delete: if isAdmin() || (isAuthenticated() && request.auth.token.email.lower() == userId.lower());
-    }
 
-    // Student Roster Rules
-    match /students/{studentId} {
-      allow read: if isAuthenticated() && belongsToCampus(resource.data.campusId);
-      allow create, update: if isAdmin();
+      allow update: if isAdmin() && isValidUser(incoming());
       allow delete: if isAdmin();
     }
 
-    // Loan Record Rules
+    // Students
+    match /students/{studentId} {
+      // We don't validate ID format on read to avoid rejecting existing legacy/manual data during list queries
+      allow read: if isSignedIn() && belongsToCampus(resource.data.campusId);
+      allow create, update: if isAdmin() && isValidStudent(incoming()) && isValidId(studentId);
+      allow delete: if isAdmin();
+    }
+    
+    // System metadata (for connection/health tests)
+    match /system/health {
+      allow read: if isSignedIn();
+    }
+
+    // Loans
     match /loans/{loanId} {
-      // For create/update, we check if the staff member belongs to the campus of the loan
-      allow read: if isAuthenticated() && belongsToCampus(resource.data.campusId);
-      allow create: if isAuthenticated() && belongsToCampus(request.resource.data.campusId);
-      allow update: if isAuthenticated() && belongsToCampus(resource.data.campusId) && 
-                    // Techs can only update status/returnDate (immutable check for other fields)
-                    (isAdmin() || (
-                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'returnDate'])
-                    ));
+      allow read: if isSignedIn() && belongsToCampus(resource.data.campusId);
+      
+      allow create: if isSignedIn() && 
+                    isValidLoan(incoming()) && 
+                    belongsToCampus(incoming().campusId);
+      
+      allow update: if isSignedIn() && 
+                    isValidLoan(incoming()) && 
+                    belongsToCampus(existing().campusId) && (
+                      isAdmin() || (
+                        isTech() && 
+                        incoming().diff(existing()).affectedKeys().hasOnly(['status', 'returnDate']) &&
+                        incoming().status in ['active', 'returned']
+                      )
+                    );
+      
       allow delete: if isAdmin();
     }
   }

@@ -36,6 +36,23 @@ export const CAMPUSES = [
   { id: 'HSLIB', name: 'HSLIB' },
 ];
 
+export const CAMPUS_PINS: Record<string, { role: 'admin' | 'tech', campusId?: string }> = {
+  '7324': { role: 'admin' }, // The requested Admin PIN
+  '8101': { role: 'tech', campusId: 'K8WES' },
+  '8102': { role: 'tech', campusId: 'K8KAT' },
+  '8103': { role: 'tech', campusId: 'K8RIC' },
+  '8104': { role: 'tech', campusId: 'HSKAT' },
+  '8105': { role: 'tech', campusId: 'K8PEA' },
+  '8106': { role: 'tech', campusId: 'K8ORE' },
+  '8107': { role: 'tech', campusId: 'K8WIN' },
+  '8108': { role: 'tech', campusId: 'HSWIN' },
+  '8109': { role: 'tech', campusId: 'K8COL' },
+  '8110': { role: 'tech', campusId: 'HSAGG' },
+  '8111': { role: 'tech', campusId: 'K8BGR' },
+  '8112': { role: 'tech', campusId: 'K8MSG' },
+  '8113': { role: 'tech', campusId: 'HSLIB' },
+};
+
 export const LOAN_REASONS = [
   'Lost Chromebook',
   'Forgotten at Home',

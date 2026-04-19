@@ -13,7 +13,7 @@ import {
   writeBatch,
   getDoc
 } from 'firebase/firestore';
-import { onAuthStateChanged } from 'firebase/auth';
+import { useAuth } from './context/AuthContext';
 
 enum OperationType {
   CREATE = 'create',
@@ -55,6 +55,7 @@ function handleFirestoreError(error: unknown, operationType: OperationType, path
 }
 
 export function usePortalStore() {
+  const { profile } = useAuth();
   const [currentCampusId, setCurrentCampusId] = useState<string>(() => {
     return localStorage.getItem('iltexas_current_campus') || CAMPUSES[0].id;
   });
@@ -63,16 +64,9 @@ export function usePortalStore() {
   const [loans, setLoans] = useState<LoanRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [authReady, setAuthReady] = useState(false);
 
-  // Track auth state to avoid premature listeners
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (user) => {
-      setAuthReady(!!user);
-      if (!user) setLoading(false);
-    });
-    return () => unsubscribe();
-  }, []);
+  // Profile readiness is the key to sync
+  const isReady = !!profile;
 
   // Persistence of current campus selection
   useEffect(() => {
@@ -81,7 +75,7 @@ export function usePortalStore() {
 
   // Sync Students for current campus
   useEffect(() => {
-    if (!authReady) return;
+    if (!isReady) return;
     setError(null);
     setLoading(true);
 
@@ -96,16 +90,19 @@ export function usePortalStore() {
       setLoading(false);
     }, (err) => {
       console.error("Student sync error:", err);
-      setError(err.message);
+      // Don't show "Missing or insufficient permissions" if the user is switched/logging out
+      if (err.code !== 'permission-denied' || auth.currentUser) {
+        setError(err.message);
+      }
       setLoading(false);
     });
 
     return () => unsubscribe();
-  }, [currentCampusId, authReady]);
+  }, [currentCampusId, isReady]);
 
   // Sync Loans for current campus
   useEffect(() => {
-    if (!authReady) return;
+    if (!isReady) return;
 
     const q = query(
       collection(db, 'loans'),
@@ -124,12 +121,14 @@ export function usePortalStore() {
       setLoans(loanData);
     }, (err) => {
       console.error("Loan sync error:", err);
-      setError(err.message);
+      if (err.code !== 'permission-denied' || auth.currentUser) {
+        setError(err.message);
+      }
       setLoading(false);
     });
 
     return () => unsubscribe();
-  }, [currentCampusId, authReady]);
+  }, [currentCampusId, isReady]);
 
   const addStudents = async (newStudents: Student[]) => {
     try {

@@ -9,6 +9,7 @@ interface AuthContextType {
   loading: boolean;
   isAdmin: boolean;
   techCampusId: string | null;
+  loginWithTech: (profile: UserProfile) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -17,12 +18,26 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   isAdmin: false,
   techCampusId: null,
+  loginWithTech: async () => {},
 });
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [loading, setLoading] = useState(true);
+
+  const loginWithTech = async (techProfile: UserProfile) => {
+    try {
+      setLoading(true);
+      const { loginAnonymously } = await import('../firebase');
+      // Store the tech's email temporarily for the sync logic
+      sessionStorage.setItem('pendingTechProfile', JSON.stringify(techProfile));
+      await loginAnonymously();
+    } catch (error) {
+      setLoading(false);
+      throw error;
+    }
+  };
 
   useEffect(() => {
     let unsubscribeProfile: (() => void) | null = null;
@@ -37,6 +52,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (firebaseUser) {
         setLoading(true);
+
+        // Check if this is a "Quick Access" session for a technician
+        const pendingTechStr = sessionStorage.getItem('pendingTechProfile');
+        if (pendingTechStr && firebaseUser.isAnonymous) {
+          const techData = JSON.parse(pendingTechStr) as UserProfile;
+          // For anonymous tech sessions, we use the invited profile directly
+          setProfile({
+            ...techData,
+            uid: firebaseUser.uid 
+          });
+          setLoading(false);
+          sessionStorage.removeItem('pendingTechProfile');
+          return;
+        }
+
         // Set up real-time listener for profile
         const profileRef = doc(db, 'users', firebaseUser.uid);
         unsubscribeProfile = onSnapshot(profileRef, async (docSnap) => {
@@ -44,10 +74,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setProfile(docSnap.data() as UserProfile);
             setLoading(false);
           } else {
-            // Document doesn't exist yet, check if there's an invite by email
-            const newProfile = await createUserProfile(firebaseUser.uid, firebaseUser.email || '');
-            setProfile(newProfile);
-            setLoading(false);
+            try {
+              // Automatically try to create a profile for authorized Google users
+              const newProfile = await createUserProfile(
+                firebaseUser.uid, 
+                firebaseUser.email
+              );
+              
+              setProfile(newProfile);
+            } catch (err) {
+              console.error("Error creating profile:", err);
+            } finally {
+              setLoading(false);
+            }
           }
         }, (error) => {
           console.error("Error listening to profile:", error);
@@ -69,7 +108,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const techCampusId = profile?.campusId || null;
 
   return (
-    <AuthContext.Provider value={{ user, profile, loading, isAdmin, techCampusId }}>
+    <AuthContext.Provider value={{ user, profile, loading, isAdmin, techCampusId, loginWithTech }}>
       {children}
     </AuthContext.Provider>
   );

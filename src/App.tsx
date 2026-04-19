@@ -20,12 +20,13 @@ import {
   LogOut,
   ShieldCheck,
   Mail,
-  AlertCircle
+  AlertCircle,
+  Trash2
 } from 'lucide-react';
 import { CAMPUSES, LOAN_REASONS, Student } from './types';
 import { usePortalStore } from './usePortalStore';
 import { useAuth } from './context/AuthContext';
-import { loginWithGoogle, logout, db, subscribeToAllUsers, updateUserProfile, UserProfile, inviteUser } from './firebase';
+import { loginWithGoogle, logout, db, subscribeToAllUsers, updateUserProfile, UserProfile, inviteUser, deleteUser } from './firebase';
 import { doc, getDocFromServer } from 'firebase/firestore';
 import React from 'react';
 import { 
@@ -75,7 +76,64 @@ export default function App() {
   } = usePortalStore();
 
 
-  const { user, profile, loading: authLoading, isAdmin, techCampusId } = useAuth();
+  const { user, profile, loading: authLoading, isAdmin, techCampusId, loginWithTech } = useAuth();
+
+  const [loginCampusId, setLoginCampusId] = useState('');
+  const [loginTechProfile, setLoginTechProfile] = useState<UserProfile | null>(null);
+  const [showTechLogin, setShowTechLogin] = useState(false);
+  const [techProfiles, setTechProfiles] = useState<UserProfile[]>([]);
+
+  useEffect(() => {
+    // If they want to see the tech login and aren't signed in, sign in anonymously to fetch tech names
+    if (!user && !authLoading && showTechLogin) {
+      const initAnon = async () => {
+        try {
+          const { loginAnonymously } = await import('./firebase');
+          await loginAnonymously();
+        } catch (err) {
+          console.error("Anon sign-in failed for tech list pre-fetch:", err);
+        }
+      };
+      initAnon();
+    }
+  }, [user, authLoading, showTechLogin]);
+
+  useEffect(() => {
+    // If we are signed in (even anonymously) buy don't have a profile yet (meaning we are on login screen)
+    // fetch only the tech names.
+    if (user && !profile && showTechLogin) {
+      const unsubscribe = subscribeToAllUsers((users) => {
+        const techs = users.filter(u => u.role === 'tech' && u.displayName);
+        setTechProfiles(techs);
+      });
+      return () => unsubscribe();
+    }
+  }, [user, profile, showTechLogin]);
+
+  const handleGoogleLogin = async () => {
+    setIsLoggingIn(true);
+    setEntryError('');
+    try {
+      await loginWithGoogle();
+    } catch (error: any) {
+      console.error("Login detail error:", error);
+      setEntryError(`Connection failed: ${error.code || 'Unknown error'}`);
+      setIsLoggingIn(false);
+    }
+  };
+
+  const handleTechLogin = async () => {
+    if (!loginTechProfile) return;
+    setIsLoggingIn(true);
+    setEntryError('');
+    try {
+      await loginWithTech(loginTechProfile);
+    } catch (error: any) {
+      console.error("Tech login error:", error);
+      setEntryError(`Access failed: ${error.message || 'Unknown error'}`);
+      setIsLoggingIn(false);
+    }
+  };
 
   // Test connection on boot
   useEffect(() => {
@@ -100,13 +158,18 @@ export default function App() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [lastImportCount, setLastImportCount] = useState(0);
   const [studentSearch, setStudentSearch] = useState('');
+  const [entryError, setEntryError] = useState('');
+  const [isLoggingIn, setIsLoggingIn] = useState(false);
   const [loadNotification, setLoadNotification] = useState('');
   const [reportStartDate, setReportStartDate] = useState(new Date().toISOString().split('T')[0]);
   const [reportEndDate, setReportEndDate] = useState(new Date().toISOString().split('T')[0]);
   const [allUsers, setAllUsers] = useState<UserProfile[]>([]);
   const [inviteEmail, setInviteEmail] = useState('');
+  const [inviteName, setInviteName] = useState('');
   const [inviteRole, setInviteRole] = useState<'admin' | 'tech'>('tech');
   const [inviteCampusId, setInviteCampusId] = useState('');
+  const [inviteStatus, setInviteStatus] = useState<'idle' | 'success' | 'error'>('idle');
+  const [inviteError, setInviteError] = useState<string | null>(null);
   const [anonChargerNum, setAnonChargerNum] = useState('');
   const [showAnonChargerDialog, setShowAnonChargerDialog] = useState(false);
   const [anonChromebookNum, setAnonChromebookNum] = useState('');
@@ -296,30 +359,49 @@ export default function App() {
     }
   }, [isAdmin, user]);
 
-  const handleUpdateUserRole = async (uid: string, newRole: 'admin' | 'tech') => {
+  const handleUpdateUserRole = async (docId: string, newRole: 'admin' | 'tech') => {
     try {
-      await updateUserProfile(uid, { role: newRole });
+      await updateUserProfile(docId, { role: newRole });
     } catch (error) {
       console.error("Error updating role:", error);
     }
   };
 
-  const handleUpdateUserCampus = async (uid: string, newCampusId: string) => {
+  const handleUpdateUserCampus = async (docId: string, newCampusId: string) => {
     try {
-      await updateUserProfile(uid, { campusId: newCampusId });
+      await updateUserProfile(docId, { campusId: newCampusId });
     } catch (error) {
       console.error("Error updating campus:", error);
     }
   };
 
-  const handleInviteUser = async () => {
-    if (!inviteEmail) return;
+  const handleDeleteUser = async (docId: string) => {
+    if (!confirm("Are you sure you want to remove this team member?")) return;
     try {
-      await inviteUser(inviteEmail, inviteRole, inviteRole === 'tech' ? inviteCampusId : undefined);
-      setInviteEmail('');
-      setInviteCampusId('');
+      await deleteUser(docId);
     } catch (error) {
+      console.error("Error deleting user:", error);
+    }
+  };
+
+  const handleInviteUser = async () => {
+    if (inviteRole === 'admin' && !inviteEmail) return;
+    if (inviteRole === 'tech' && !inviteName) return;
+    
+    setInviteStatus('idle');
+    setInviteError(null);
+
+    try {
+      await inviteUser(inviteEmail || null, inviteRole, inviteRole === 'tech' ? inviteCampusId : undefined, inviteName || undefined);
+      setInviteStatus('success');
+      setInviteEmail('');
+      setInviteName('');
+      setInviteCampusId('');
+      setTimeout(() => setInviteStatus('idle'), 3000);
+    } catch (error: any) {
       console.error("Error inviting user:", error);
+      setInviteStatus('error');
+      setInviteError(error.message || "Failed to invite user");
     }
   };
 
@@ -695,10 +777,10 @@ export default function App() {
     );
   }
 
-  if (!user) {
+  if (!user || (!profile && !user.isAnonymous)) {
     return (
       <div className="flex flex-col items-center justify-center min-h-screen bg-brand-bg p-6">
-        <div className="max-w-md w-full bg-white rounded-3xl shadow-xl p-8 border border-slate-100 flex flex-col items-center text-center space-y-8">
+        <div className="max-w-md w-full bg-white rounded-3xl shadow-2xl p-10 border border-slate-100 flex flex-col items-center text-center space-y-6">
           <div className="bg-white p-4 rounded-full shadow-lg border-2 border-brand-gold/30">
             <img 
               src="https://www.iltexas.org/cms/lib/TX02217083/Centricity/Domain/1/ILTexas%20Seal.png" 
@@ -712,20 +794,112 @@ export default function App() {
             />
           </div>
           <div>
-            <h1 className="text-3xl font-black text-brand-maroon uppercase tracking-tight mb-2">ILTexas Loaner Portal</h1>
-            <p className="text-text-sub font-medium">Internal Technology Asset Management System</p>
+            <h1 className="text-3xl font-black text-brand-maroon uppercase tracking-tight mb-2">ILTexas Portal</h1>
+            <p className="text-text-sub font-medium text-sm">Choose your access method below</p>
           </div>
           
-          <div className="w-full space-y-4 pt-4">
-            <Button 
-              className="w-full h-14 bg-brand-maroon hover:bg-slate-900 text-white font-bold text-lg rounded-2xl shadow-md transition-all flex items-center justify-center gap-3"
-              onClick={loginWithGoogle}
-            >
-              <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/split-screen/google.svg" className="w-6 h-6 bg-white rounded-full p-1" referrerPolicy="no-referrer" />
-              Sign in with Google
-            </Button>
-            <p className="text-[10px] text-text-sub uppercase font-bold text-center">Restricted Access for IT Staff Only</p>
+          <div className="w-full space-y-4">
+            {!showTechLogin ? (
+              <>
+                <Button 
+                  onClick={handleGoogleLogin}
+                  className="w-full h-16 bg-brand-maroon hover:bg-slate-900 text-white font-bold text-lg rounded-2xl shadow-lg transition-all flex items-center justify-center gap-3"
+                  disabled={isLoggingIn}
+                >
+                  {isLoggingIn ? (
+                    <div className="w-6 h-6 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                  ) : (
+                    <>
+                      <img src="https://www.gstatic.com/firebasejs/ui/2.0.0/images/split-screen/google.svg" className="w-6 h-6 bg-white rounded-full p-1" referrerPolicy="no-referrer" />
+                      Staff Google Login
+                    </>
+                  )}
+                </Button>
+                
+                <Button 
+                  variant="ghost"
+                  onClick={() => setShowTechLogin(true)}
+                  className="w-full h-12 text-slate-400 hover:text-brand-maroon font-bold text-xs uppercase tracking-widest flex items-center justify-center gap-2"
+                >
+                  <Users className="w-4 h-4" />
+                  Campus Technician Access
+                </Button>
+              </>
+            ) : (
+              <motion.div 
+                initial={{ opacity: 0, y: 10 }}
+                animate={{ opacity: 1, y: 0 }}
+                className="space-y-4 pt-2"
+              >
+                <div className="space-y-4 bg-slate-50 p-6 rounded-2xl border border-slate-100">
+                  <div className="space-y-1 text-left">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Select Campus</label>
+                    <select 
+                      className="w-full h-12 px-4 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-brand-gold font-medium text-sm"
+                      value={loginCampusId}
+                      onChange={(e) => {
+                        setLoginCampusId(e.target.value);
+                        setLoginTechProfile(null);
+                      }}
+                    >
+                      <option value="">Select Campus...</option>
+                      {CAMPUSES.map(c => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <div className="space-y-1 text-left">
+                    <label className="text-[10px] font-bold text-slate-400 uppercase tracking-widest ml-1">Your Name</label>
+                    <select 
+                      className="w-full h-12 px-4 bg-white border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-brand-gold font-medium text-sm"
+                      disabled={!loginCampusId}
+                      value={loginTechProfile?.id || ''}
+                      onChange={(e) => {
+                        const tech = techProfiles.find(t => t.id === e.target.value);
+                        setLoginTechProfile(tech || null);
+                      }}
+                    >
+                      <option value="">Choose your name...</option>
+                      {techProfiles
+                        .filter(t => t.campusId === loginCampusId)
+                        .map(t => (
+                        <option key={t.id} value={t.id}>{t.displayName}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  <Button 
+                    onClick={handleTechLogin}
+                    disabled={!loginTechProfile || isLoggingIn}
+                    className="w-full h-14 bg-brand-maroon hover:bg-slate-900 text-white font-bold text-lg rounded-xl shadow-lg transition-all"
+                  >
+                    {isLoggingIn ? (
+                      <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+                    ) : (
+                      "Access Portal"
+                    )}
+                  </Button>
+                </div>
+
+                <Button 
+                  variant="ghost"
+                  onClick={() => setShowTechLogin(false)}
+                  className="w-full text-slate-400 hover:text-brand-maroon font-bold text-[10px] uppercase tracking-widest"
+                >
+                  Back to Google Login
+                </Button>
+              </motion.div>
+            )}
+            
+            {entryError && (
+              <p className="text-xs text-red-500 font-bold flex items-center justify-center gap-1 mt-2">
+                <AlertCircle className="w-3 h-3" /> {entryError}
+              </p>
+            )}
           </div>
+          
+          <p className="text-[10px] text-text-sub uppercase font-bold text-center tracking-widest opacity-40">Restricted Access • Campus Technology Only</p>
         </div>
       </div>
     );
@@ -755,7 +929,7 @@ export default function App() {
             <div className="flex items-center gap-2 bg-white/10 px-3 py-1.5 rounded-full border border-white/5">
               <div className="w-2 h-2 rounded-full bg-green-400" />
               <span className="text-white/70 text-[11px] font-bold uppercase tracking-wider">
-                {profile.role}: {user.displayName}
+                {profile.role}: {profile.displayName || user.displayName}
               </span>
             </div>
           )}
@@ -818,19 +992,50 @@ export default function App() {
 
                 {/* Add Member Form */}
                 <div className="mt-6 p-4 bg-slate-50 border border-slate-200 rounded-xl space-y-4">
-                  <p className="text-[10px] font-bold text-text-sub uppercase tracking-wider">Add Team Member</p>
+                  <div className="flex justify-between items-center">
+                    <p className="text-[10px] font-bold text-text-sub uppercase tracking-wider">Add Team Member</p>
+                    {inviteStatus === 'success' && (
+                      <span className="text-[10px] text-green-600 font-bold flex items-center gap-1 animate-in fade-in slide-in-from-right-2">
+                        <CheckCircle2 className="w-3 h-3" /> Member Invited!
+                      </span>
+                    )}
+                    {inviteStatus === 'error' && (
+                      <span className="text-[10px] text-red-600 font-bold flex items-center gap-1">
+                        <AlertCircle className="w-3 h-3" /> {inviteError}
+                      </span>
+                    )}
+                  </div>
                   <div className="flex flex-col md:flex-row gap-3">
                     <div className="flex-1 space-y-1">
-                      <label htmlFor="invite-email" className="text-[9px] font-bold text-slate-400 uppercase ml-1">Email Address</label>
+                      <label htmlFor="invite-name" className="text-[9px] font-bold text-slate-400 uppercase ml-1">
+                        {inviteRole === 'tech' ? 'Technician Name' : 'Full Name'}
+                      </label>
                       <Input 
-                        id="invite-email"
-                        placeholder="john@ilt.org" 
-                        className="h-10 text-xs bg-white border-slate-200 focus:border-brand-gold"
-                        value={inviteEmail}
-                        onChange={(e) => setInviteEmail(e.target.value)}
+                        id="invite-name"
+                        placeholder={inviteRole === 'tech' ? "e.g. John Doe" : "Full Name"}
+                        className={cn(
+                          "h-10 text-xs bg-white border-slate-200 focus:border-brand-gold"
+                        )}
+                        value={inviteName}
+                        onChange={(e) => setInviteName(e.target.value)}
                         autoFocus
                       />
                     </div>
+                    {inviteRole === 'admin' && (
+                      <div className="flex-1 space-y-1">
+                        <label htmlFor="invite-email" className="text-[9px] font-bold text-slate-400 uppercase ml-1">Email Address</label>
+                        <Input 
+                          id="invite-email"
+                          placeholder="john@ilt.org" 
+                          className={cn(
+                            "h-10 text-xs bg-white border-slate-200 focus:border-brand-gold",
+                            inviteStatus === 'error' && "border-red-300"
+                          )}
+                          value={inviteEmail}
+                          onChange={(e) => setInviteEmail(e.target.value)}
+                        />
+                      </div>
+                    )}
                     <div className="w-full md:w-[150px] space-y-1">
                       <label className="text-[9px] font-bold text-slate-400 uppercase ml-1">Assign Role</label>
                       <select 
@@ -859,11 +1064,14 @@ export default function App() {
                     )}
                     <div className="flex items-end">
                       <Button 
-                        className="h-10 bg-brand-maroon text-white font-bold text-xs px-6 hover:bg-slate-800"
+                        className={cn(
+                          "h-10 text-white font-bold text-xs px-6 transition-all",
+                          inviteStatus === 'success' ? "bg-green-600" : "bg-brand-maroon hover:bg-slate-800"
+                        )}
                         onClick={handleInviteUser}
-                        disabled={!inviteEmail || (inviteRole === 'tech' && !inviteCampusId)}
+                        disabled={(inviteRole === 'admin' && !inviteEmail) || (inviteRole === 'tech' && (!inviteName || !inviteCampusId))}
                       >
-                        Add Member
+                        {inviteStatus === 'success' ? "Invited!" : "Add Member"}
                       </Button>
                     </div>
                   </div>
@@ -873,7 +1081,8 @@ export default function App() {
                   <Table>
                     <TableHeader>
                       <TableRow className="hover:bg-transparent">
-                        <TableHead className="text-xs">Email</TableHead>
+                        <TableHead className="text-xs">Member</TableHead>
+                        <TableHead className="text-xs font-mono"></TableHead>
                         <TableHead className="text-xs">Role</TableHead>
                         <TableHead className="text-xs">Assigned Campus</TableHead>
                         <TableHead className="text-right text-xs">Actions</TableHead>
@@ -881,10 +1090,16 @@ export default function App() {
                     </TableHeader>
                     <TableBody>
                       {allUsers.map((u) => (
-                        <TableRow key={u.uid} className="hover:bg-slate-50">
-                          <TableCell className="font-medium text-[11px] py-3">
-                            {u.email}
-                            {u.uid === user.uid && <span className="ml-2 text-[9px] bg-brand-gold/20 text-brand-maroon px-1.5 py-0.5 rounded font-bold uppercase">You</span>}
+                        <TableRow key={u.id} className="hover:bg-slate-50">
+                          <TableCell className="py-3">
+                            <div className="flex flex-col">
+                              <span className="font-bold text-[11px] text-brand-maroon">{u.displayName || 'Unnamed User'}</span>
+                              <span className="text-[9px] text-slate-400">{u.email || 'Quick Access Only'}</span>
+                            </div>
+                          </TableCell>
+                          <TableCell className="py-3">
+                            {u.uid === user.uid && <span className="text-[9px] bg-brand-gold/20 text-brand-maroon px-1.5 py-0.5 rounded font-bold uppercase transition-all duration-300">You</span>}
+                            {!u.uid && <span className="text-[9px] bg-slate-100 text-slate-400 px-1.5 py-0.5 rounded font-bold uppercase italic">Pending</span>}
                           </TableCell>
                           <TableCell className="py-3">
                             {u.uid === user.uid ? (
@@ -895,7 +1110,7 @@ export default function App() {
                               <select 
                                 className="text-[10px] border border-slate-200 rounded px-1.5 py-1 bg-white outline-none focus:ring-1 focus:ring-brand-gold font-bold"
                                 value={u.role}
-                                onChange={(e) => handleUpdateUserRole(u.uid, e.target.value as 'admin' | 'tech')}
+                                onChange={(e) => handleUpdateUserRole(u.id, e.target.value as 'admin' | 'tech')}
                               >
                                 <option value="tech">Technician</option>
                                 <option value="admin">Admin</option>
@@ -909,7 +1124,7 @@ export default function App() {
                               <select 
                                 className="text-[10px] border border-slate-200 rounded px-1.5 py-1 bg-white outline-none focus:ring-1 focus:ring-brand-gold"
                                 value={u.campusId || ''}
-                                onChange={(e) => handleUpdateUserCampus(u.uid, e.target.value)}
+                                onChange={(e) => handleUpdateUserCampus(u.id, e.target.value)}
                               >
                                 <option value="">Unassigned</option>
                                 {CAMPUSES.map(c => (
@@ -919,8 +1134,18 @@ export default function App() {
                             )}
                           </TableCell>
                           <TableCell className="text-right py-3">
-                            {/* Actions column simplified since roles are now in dropdown */}
-                            <span className="text-[10px] text-slate-300">Managed</span>
+                            {u.uid !== user.uid ? (
+                              <Button 
+                                variant="ghost" 
+                                size="sm" 
+                                onClick={() => handleDeleteUser(u.id)}
+                                className="h-7 w-7 p-0 text-slate-300 hover:text-red-500"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </Button>
+                            ) : (
+                              <span className="text-[10px] text-slate-300">Self</span>
+                            )}
                           </TableCell>
                         </TableRow>
                       ))}
