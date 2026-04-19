@@ -1,0 +1,77 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-maroon: #5D001E;
+  --color-brand-gold: #C5A059;
+  --color-brand-bg: #F4F7F9;
+  --color-brand-card: #FFFFFF;
+  --color-text-main: #1A1C1E;
+  --color-text-sub: #64748B;
+  --color-border-subtle: #E2E8F0;
+  
+  --radius-xl: 1rem;
+  --radius-2xl: 1.5rem;
+}
+
+@layer base {
+  body {
+    @apply bg-brand-bg text-text-main antialiased;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  }
+}
+
+@layer components {
+  .bento-grid {
+    @apply grid gap-5 p-6;
+    grid-template-columns: repeat(4, 1fr);
+    grid-template-rows: repeat(3, minmax(180px, auto));
+  }
+
+  .bento-card {
+    @apply bg-brand-card rounded-2xl border border-border-subtle p-6 flex flex-col shadow-sm transition-all;
+  }
+
+  .card-title {
+    @apply text-[13px] font-semibold text-text-sub uppercase tracking-wider mb-4 flex items-center gap-2;
+  }
+
+  /* Grid Layout Classes */
+  .grid-checkout { @apply col-span-2 row-span-2; }
+  .grid-student { @apply col-span-1 row-span-1; }
+  .grid-charger { @apply col-span-1 row-span-1; }
+  .grid-cb-quick { @apply col-span-1 row-span-1; }
+  .grid-upload { @apply col-span-1 row-span-1; }
+  .grid-reports { @apply col-span-4 row-span-1; }
+
+  .reason-btn {
+    @apply p-3 border border-border-subtle rounded-lg bg-white cursor-pointer text-[13px] text-center transition-all hover:bg-slate-50;
+  }
+
+  .reason-btn-active {
+    @apply bg-brand-maroon text-white border-brand-maroon hover:bg-brand-maroon/90;
+  }
+
+  .btn-primary {
+    @apply bg-brand-maroon text-white px-4 py-3 rounded-lg font-semibold text-base cursor-pointer hover:bg-brand-maroon/90 transition-colors disabled:opacity-50;
+  }
+
+  .upload-zone {
+    @apply border-2 border-dashed border-border-subtle rounded-xl flex flex-col items-center justify-center text-text-sub cursor-pointer hover:bg-slate-50 hover:border-brand-gold transition-all h-full min-h-[120px];
+  }
+}
+
+/* Shadcn Compatibility Overrides for v4 */
+:root {
+  --radius: 0.5rem;
+  --border: oklch(0.922 0 0);
+  --input: oklch(0.922 0 0);
+  --ring: #5D001E;
+  --primary: #5D001E;
+  --primary-foreground: #FFFFFF;
+  --secondary: #64748B;
+  --secondary-foreground: #FFFFFF;
+  --accent: #F4F7F9;
+  --accent-foreground: #1A1C1E;
+  --destructive: #EF4444;
+  --destructive-foreground: #FFFFFF;
+}

@@ -1,0 +1,6 @@
+{
+  "name": "ILTexas Loaner Portal",
+  "description": "A comprehensive portal for managing Chromebook and charger loaners across multiple ILTexas campuses, featuring student data CSV/Excel uploads, checkout tracking, and reporting.",
+  "requestFramePermissions": [],
+  "majorCapabilities": []
+}

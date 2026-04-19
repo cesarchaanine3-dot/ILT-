@@ -1,0 +1,62 @@
+{
+  "entities": {
+    "Student": {
+      "title": "Student",
+      "description": "Student record in the database",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "grade": { "type": "string" },
+        "email": { "type": "string" },
+        "location": { "type": "string" },
+        "campusId": { "type": "string" }
+      },
+      "required": ["id", "name", "campusId"]
+    },
+    "LoanRecord": {
+      "title": "LoanRecord",
+      "description": "Record of a device loan",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "assetTag": { "type": "string" },
+        "type": { "type": "string", "enum": ["chromebook", "charger"] },
+        "reason": { "type": "string" },
+        "checkoutDate": { "type": "string" },
+        "returnDate": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "returned"] },
+        "campusId": { "type": "string" }
+      },
+      "required": ["id", "studentId", "studentName", "type", "checkoutDate", "status", "campusId"]
+    },
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "User account and role information",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string", "enum": ["admin", "tech"] },
+        "campusId": { "type": "string" }
+      },
+      "required": ["uid", "email", "role"]
+    }
+  },
+  "firestore": {
+    "/students/{studentId}": {
+      "schema": "Student",
+      "description": "Roster of all students (Primary Key: Student ID)"
+    },
+    "/loans/{loanId}": {
+      "schema": "LoanRecord",
+      "description": "Log of all device loans"
+    },
+    "/users/{userId}": {
+      "schema": "UserProfile",
+      "description": "User permissions and school assignments"
+    }
+  }
+}

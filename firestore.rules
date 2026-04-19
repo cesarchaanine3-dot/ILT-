@@ -1,0 +1,71 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        (request.auth.token.email.lower() == "cesarchaanine3@gmail.com" && request.auth.token.email_verified == true) || 
+        (request.auth.token.email.lower() == "reportilt@gmail.com" && request.auth.token.email_verified == true) || 
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+
+    function isTech() {
+      return isAuthenticated() && exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'tech';
+    }
+
+    function belongsToCampus(campusId) {
+      return isAdmin() || (isTech() && getUserData().campusId == campusId);
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    // User Profile Rules
+    match /users/{userId} {
+      allow read: if isAuthenticated() && (request.auth.uid == userId || isAdmin());
+      allow create: if isAuthenticated() && (
+        // Self-creation for initial login
+        (request.auth.uid == userId && request.resource.data.role == (
+          (request.auth.token.email.lower() == "cesarchaanine3@gmail.com" || request.auth.token.email.lower() == "reportilt@gmail.com") 
+          ? "admin" : "tech"
+        )) ||
+        isAdmin()
+      );
+      allow update: if isAdmin();
+      allow delete: if isAdmin() || (isAuthenticated() && request.auth.token.email.lower() == userId.lower());
+    }
+
+    // Student Roster Rules
+    match /students/{studentId} {
+      allow read: if isAuthenticated() && belongsToCampus(resource.data.campusId);
+      allow create, update: if isAdmin();
+      allow delete: if isAdmin();
+    }
+
+    // Loan Record Rules
+    match /loans/{loanId} {
+      // For create/update, we check if the staff member belongs to the campus of the loan
+      allow read: if isAuthenticated() && belongsToCampus(resource.data.campusId);
+      allow create: if isAuthenticated() && belongsToCampus(request.resource.data.campusId);
+      allow update: if isAuthenticated() && belongsToCampus(resource.data.campusId) && 
+                    // Techs can only update status/returnDate (immutable check for other fields)
+                    (isAdmin() || (
+                      request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'returnDate'])
+                    ));
+      allow delete: if isAdmin();
+    }
+  }
+}
